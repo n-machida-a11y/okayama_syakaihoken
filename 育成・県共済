@@ -1,0 +1,98 @@
+' VBA Project
+' --------------------------------------------------
+' FileName: TransferIkuseiKenkyosaiData.vba
+' --------------------------------------------------
+Option Explicit
+
+' --- 「育成・県共済」シートから当月シートへデータを転記するメイン処理 ---
+Sub TransferIkuseiKenkyosaiData()
+    ' --- 変数宣言 ---
+    Dim wsSource As Worksheet       ' 転記元シート「育成・県共済」
+    Dim wsDest As Worksheet         ' 転記先シート (今月のシート)
+    Dim destSheetName As String     ' 転記先シート名 (例: "2025.10月")
+    Dim currentMonthName As String  ' 当月のヘッダー用文字列 (例: "10月")
+    Dim lastRowSource As Long       ' 転記元シートの最終行番号
+    Dim i As Long                   ' ループカウンター
+    Dim sourceKyoten As String      ' 転記元の拠点名
+    Dim destFindCell As Range       ' 転記先で見つかった拠点名のセル
+    Dim destRow As Long             ' 転記先の拠点がある行番号
+    Dim notFoundKyotenList As String ' 見つからなかった拠点リスト
+
+    ' --- 初期設定 ---
+    ' 現在の日付から転記先シート名を生成します
+    destSheetName = Format(Date, "YYYY.M") & "月"
+    ' 現在の月からヘッダー用の文字列を生成します
+    currentMonthName = Format(Date, "M") & "月"
+
+    ' --- ワークシートの存在チェック ---
+    On Error Resume Next
+    Set wsSource = ThisWorkbook.Sheets("育成・県共済")
+    If wsSource Is Nothing Then
+        MsgBox "シート「育成・県共済」が見つかりません。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    
+    Set wsDest = ThisWorkbook.Sheets(destSheetName)
+    If wsDest Is Nothing Then
+        MsgBox "今月のシート「" & destSheetName & "」が見つかりません。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    On Error GoTo 0 ' エラーハンドリングを通常モードに戻す
+
+    ' --- 処理開始 ---
+    Application.ScreenUpdating = False ' 画面の更新を一時停止して処理を高速化
+    notFoundKyotenList = ""
+
+    ' --- 転記先シートのヘッダーを当月名に更新 ---
+    wsDest.Range("L2").Value = currentMonthName & "育成"
+    wsDest.Range("M2").Value = currentMonthName & "県共済"
+
+    ' --- メイン処理 (転記元シートをループ) ---
+    lastRowSource = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row
+
+    ' 2行目から最終行までループ
+    For i = 2 To lastRowSource
+        sourceKyoten = wsSource.Cells(i, "A").Value
+
+        ' 拠点名が空欄の行はスキップ
+        If sourceKyoten <> "" Then
+            ' 転記先シートで転記元の拠点名を検索 (A列を対象に完全一致で検索)
+            Set destFindCell = wsDest.Columns("A").Find(What:=sourceKyoten, LookIn:=xlValues, LookAt:=xlWhole)
+
+            ' 拠点が見つかった場合のみ転記処理を実行
+            If Not destFindCell Is Nothing Then
+                destRow = destFindCell.Row ' 見つかった行番号を取得
+
+                ' --- 値を転記 ---
+                ' 転記先の拠点がある行から2行下が「給与 預り分」の行と想定
+                ' C列(育成金額)の値をL列に転記
+                wsDest.Cells(destRow + 2, "L").Value = wsSource.Cells(i, "C").Value
+                ' D列(県共済)の値をM列に転記
+                wsDest.Cells(destRow + 2, "M").Value = wsSource.Cells(i, "D").Value
+
+            Else
+                ' 転記先に拠点名が見つからない場合はリストに追加
+                notFoundKyotenList = notFoundKyotenList & "・" & sourceKyoten & vbCrLf
+            End If
+        End If
+    Next i
+
+    ' --- 終了処理 ---
+    Application.ScreenUpdating = True ' 画面の更新を再開
+
+    ' --- 完了メッセージ ---
+    If notFoundKyotenList = "" Then
+        MsgBox "育成・県共済データの転記処理が正常に完了しました。", vbInformation, "完了"
+    Else
+        MsgBox "処理が完了しましたが、一部の拠点が転記されませんでした。" & vbCrLf & vbCrLf & _
+               "【転記されなかった拠点】" & vbCrLf & notFoundKyotenList & vbCrLf & _
+               "転記元と転記先で拠点名が完全に一致しているか確認してください。", vbExclamation, "完了（一部未転記）"
+    End If
+    
+    ' --- オブジェクトの解放 ---
+    Set wsSource = Nothing
+    Set wsDest = Nothing
+    Set destFindCell = Nothing
+
+End Sub
+
