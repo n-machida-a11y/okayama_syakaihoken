@@ -1,0 +1,107 @@
+' VBA Project
+' --------------------------------------------------
+' FileName: SocialInsuranceTransfer.vba
+' --------------------------------------------------
+Option Explicit
+
+Sub TransferSocialInsuranceData()
+    ' --- 変数宣言 ---
+    Dim wsSource As Worksheet       ' 転記元シート「健康保険・厚生年金」
+    Dim wsDest As Worksheet         ' 転記先シート (今月のシート)
+    Dim destSheetName As String     ' 転記先シート名 (例: "2025.9月")
+    Dim prevMonthName As String     ' 前月のヘッダー用文字列 (例: "8月")
+    Dim lastRowSource As Long       ' 転記元シートの最終行番号
+    Dim i As Long                   ' ループカウンター
+    Dim sourceKyoten As String      ' 転記元の拠点名
+    Dim destFindCell As Range       ' 転記先で見つかった拠点名のセル
+    Dim destRow As Long             ' 転記先の拠点がある行番号
+    Dim notFoundKyotenList As String ' 見つからなかった拠点リスト
+
+    ' --- 初期設定 ---
+    ' 現在の日付から転記先シート名を生成します
+    destSheetName = Format(Date, "YYYY.M") & "月"
+    ' 前月を取得してヘッダー用の文字列を生成します
+    prevMonthName = Format(DateAdd("m", -1, Date), "M") & "月"
+
+    ' --- ワークシートの存在チェック ---
+    On Error Resume Next
+    Set wsSource = ThisWorkbook.Sheets("健康保険・厚生年金")
+    If wsSource Is Nothing Then
+        MsgBox "シート「健康保険・厚生年金」が見つかりません。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    
+    Set wsDest = ThisWorkbook.Sheets(destSheetName)
+    If wsDest Is Nothing Then
+        MsgBox "今月のシート「" & destSheetName & "」が見つかりません。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    On Error GoTo 0 ' エラーハンドリングを通常モードに戻す
+
+    ' --- 処理開始 ---
+    Application.ScreenUpdating = False ' 画面の更新を一時停止して処理を高速化
+    notFoundKyotenList = ""
+
+    ' --- 転記先シートのヘッダーを前月名に更新 ---
+    wsDest.Range("E2").Value = prevMonthName & "健保料"
+    wsDest.Range("F2").Value = prevMonthName & "厚年料"
+    wsDest.Range("G2").Value = prevMonthName & "拠出金"
+
+    ' --- メイン処理 (転記元シートをループ) ---
+    lastRowSource = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row
+
+    ' 2行目から最終行まで、3行ずつ(本人負担, 法人負担, +/-)セットで処理
+    For i = 2 To lastRowSource Step 3
+        sourceKyoten = wsSource.Cells(i, "A").Value
+
+        ' 拠点名が空欄の行はスキップ
+        If sourceKyoten = "" Then GoTo NextIteration
+        
+        ' 転記先シートで転記元の拠点名を検索 (A列を対象に完全一致で検索)
+        Set destFindCell = wsDest.Columns("A").Find(What:=sourceKyoten, LookIn:=xlValues, LookAt:=xlWhole)
+
+        ' 拠点が見つかった場合のみ転記処理を実行
+        If Not destFindCell Is Nothing Then
+            destRow = destFindCell.Row ' 見つかった行番号を取得
+
+            ' --- 値を転記 ---
+            ' 【給与 預り分】の行 (本人負担)
+            ' 転記先の拠点がある行から2行下が「給与 預り分」の行と想定
+            wsDest.Cells(destRow + 2, "E").Value = wsSource.Cells(i, "D").Value '健保料
+            wsDest.Cells(destRow + 2, "F").Value = wsSource.Cells(i, "E").Value '厚年料
+            
+            ' 【給与 事業所負担】の行 (法人負担 と +/- の合計)
+            ' 転記先の拠点がある行から3行下が「給与 事業所負担」の行と想定
+            wsDest.Cells(destRow + 3, "E").Value = wsSource.Cells(i + 1, "D").Value + wsSource.Cells(i + 2, "D").Value '健保料
+            wsDest.Cells(destRow + 3, "F").Value = wsSource.Cells(i + 1, "E").Value + wsSource.Cells(i + 2, "E").Value '厚年料
+            wsDest.Cells(destRow + 3, "G").Value = wsSource.Cells(i + 1, "F").Value + wsSource.Cells(i + 2, "F").Value '拠出金
+
+        Else
+            ' 転記先に拠点名が見つからない場合もリストに追加
+            notFoundKyotenList = notFoundKyotenList & "・" & sourceKyoten & vbCrLf
+        End If
+
+NextIteration:
+    Next i
+
+    ' --- 終了処理 ---
+    Application.ScreenUpdating = True ' 画面の更新を再開
+
+    ' --- 完了メッセージ ---
+    If notFoundKyotenList = "" Then
+        MsgBox "転記処理が正常に完了しました。", vbInformation, "完了"
+    Else
+        MsgBox "処理が完了しましたが、一部の拠点が転記されませんでした。" & vbCrLf & vbCrLf & _
+               "【転記されなかった拠点】" & vbCrLf & notFoundKyotenList & vbCrLf & _
+               "転記元と転記先で拠点名が完全に一致しているか確認してください。", vbExclamation, "完了（一部未転記）"
+    End If
+    
+    ' --- オブジェクトの解放 ---
+    Set wsSource = Nothing
+    Set wsDest = Nothing
+    Set destFindCell = Nothing
+
+End Sub
+
+
+
