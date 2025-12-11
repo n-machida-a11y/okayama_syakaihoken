@@ -1,0 +1,156 @@
+' VBA Project
+' --------------------------------------------------
+' FileName: TransferOthersData.vba
+' --------------------------------------------------
+Option Explicit
+
+' --- 「その他」シートから当月シートへデータを転記するメイン処理 ---
+Sub TransferOthersData()
+    ' --- 変数宣言 ---
+    Dim wsSource As Worksheet       ' 転記元シート「その他」
+    Dim wsDest As Worksheet         ' 転記先シート (今月のシート)
+    Dim destSheetName As String     ' 転記先シート名 (例: "2025.10月")
+    Dim currentMonthName As String  ' 当月のヘッダー用文字列 (例: "10月")
+
+    Dim lastRowSource As Long       ' 転記元シートの最終行番号 (A列)
+    Dim lastColSource As Long       ' 転記元シートの最終列番号 (3行目)
+    Dim r As Long                   ' ループカウンター (行)
+    Dim c As Long                   ' ループカウンター (列)
+
+    Dim sourceKyoten As String      ' 転記元の拠点名
+    Dim destFindCell As Range       ' 転記先で見つかった拠点名のセル
+    Dim destRow As Long             ' 転記先の拠点がある行番号
+    
+    Dim itemMap As Object           ' 種別と転記先列のマッピング用辞書
+    Dim itemRowMap As Object        ' 種別と転記元行番号のマッピング用辞書
+    Dim key As Variant              ' 辞書のキー取得用
+    
+    Dim notFoundKyotenList As String ' 見つからなかった拠点リスト
+    Dim notFoundItemList As String   ' 見つからなかった種別リスト
+
+    ' --- 初期設定 ---
+    destSheetName = Format(Date, "YYYY.M") & "月"
+    currentMonthName = Format(Date, "M") & "月"
+
+    ' --- ワークシートの存在チェック ---
+    On Error Resume Next
+    Set wsSource = ThisWorkbook.Sheets("その他")
+    If wsSource Is Nothing Then
+        MsgBox "シート「その他」が見つかりません。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    
+    Set wsDest = ThisWorkbook.Sheets(destSheetName)
+    If wsDest Is Nothing Then
+        MsgBox "今月のシート「" & destSheetName & "」が見つかりませんでした。" & vbCrLf & "シート名を確認してください。", vbCritical, "エラー"
+        Exit Sub
+    End If
+    On Error GoTo 0
+
+    ' --- 処理開始 ---
+    Application.ScreenUpdating = False
+    notFoundKyotenList = ""
+    notFoundItemList = ""
+
+    ' --- 転記先シートのヘッダーを更新 ---
+    wsDest.Range("I2").Value = currentMonthName & "所得税"
+    wsDest.Range("J2").Value = currentMonthName & "住民税"
+    wsDest.Range("K2").Value = currentMonthName & "労金"
+    wsDest.Range("N2").Value = currentMonthName & "勤労者共済"
+
+    ' --- STEP 1: 転記対象の種別と、転記先の列を辞書に定義 ---
+    Set itemMap = CreateObject("Scripting.Dictionary")
+    itemMap.Add "所得税", "I"
+    itemMap.Add "住民税", "J"
+    itemMap.Add "労金共済", "K"
+    itemMap.Add "勤労者共済", "N"
+    
+    ' --- STEP 2: 「その他」シートをスキャンし、各種別の行番号を調べて辞書に格納 ---
+    Set itemRowMap = CreateObject("Scripting.Dictionary")
+    lastRowSource = wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row
+    For r = 4 To lastRowSource
+        Dim itemKey As String
+        itemKey = Trim(wsSource.Cells(r, "A").Value)
+        If itemMap.Exists(itemKey) Then
+            ' 種別名と、その種別がある行番号をセットで記憶
+            itemRowMap(itemKey) = r
+        End If
+    Next r
+
+    ' --- メイン処理 (転記元シートの「列」をループ) ---
+    lastColSource = wsSource.Cells(3, wsSource.Columns.Count).End(xlToLeft).Column
+
+    ' B列から最終列まで、拠点ごとにループ
+    For c = 2 To lastColSource
+        sourceKyoten = Trim(wsSource.Cells(3, c).Value)
+
+        If sourceKyoten <> "" Then
+            ' 当月シートで拠点名を検索
+            Set destFindCell = wsDest.Columns("A").Find(What:=sourceKyoten, LookIn:=xlValues, LookAt:=xlWhole)
+            
+            If Not destFindCell Is Nothing Then
+                ' 拠点が見つかった場合
+                destRow = destFindCell.Row
+
+                ' 定義した各種別について転記処理を行う
+                For Each key In itemMap.Keys
+                    If itemRowMap.Exists(key) Then
+                        ' 転記元シートから金額を取得
+                        Dim sourceDataRow As Long
+                        Dim destDataCol As String
+                        Dim amount As Variant
+                        
+                        sourceDataRow = itemRowMap(key) ' STEP2で調べた行番号
+                        destDataCol = itemMap(key)      ' STEP1で定義した列文字
+                        amount = wsSource.Cells(sourceDataRow, c).Value
+                        
+                        ' 転記先の「給与 預り分」行に金額を書き込む
+                        wsDest.Cells(destRow + 2, destDataCol).Value = amount
+                    Else
+                        ' 転記元シートに該当の種別が見つからなかった場合
+                        If InStr(notFoundItemList, key) = 0 Then
+                            notFoundItemList = notFoundItemList & "・" & key & vbCrLf
+                        End If
+                    End If
+                Next key
+            Else
+                ' 転記先に拠点名が見つからなかった場合
+                If InStr(notFoundKyotenList, sourceKyoten) = 0 Then
+                     notFoundKyotenList = notFoundKyotenList & "・" & sourceKyoten & vbCrLf
+                End If
+            End If
+        End If
+    Next c
+
+    ' --- 終了処理 ---
+    Application.ScreenUpdating = True
+
+    ' --- 完了メッセージ ---
+    Dim msg As String
+    msg = "「その他」シートからの転記処理が正常に完了しました。"
+    Dim hasWarning As Boolean
+    hasWarning = False
+
+    If notFoundKyotenList <> "" Then
+        msg = msg & vbCrLf & vbCrLf & "【当月シートに見つからない拠点】" & vbCrLf & notFoundKyotenList
+        hasWarning = True
+    End If
+    If notFoundItemList <> "" Then
+        msg = msg & vbCrLf & vbCrLf & "【「その他」シートに見つからない種別】" & vbCrLf & notFoundItemList
+        hasWarning = True
+    End If
+
+    If hasWarning Then
+        MsgBox msg, vbExclamation, "完了（一部未転記・未検出あり）"
+    Else
+        MsgBox msg, vbInformation, "完了"
+    End If
+    
+    ' --- オブジェクトの解放 ---
+    Set wsSource = Nothing
+    Set wsDest = Nothing
+    Set destFindCell = Nothing
+    Set itemMap = Nothing
+    Set itemRowMap = Nothing
+
+End Sub
