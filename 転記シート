@@ -1,0 +1,206 @@
+' VBA Project
+' --------------------------------------------------
+' FileName: CreateJournalData.vba
+' --------------------------------------------------
+Option Explicit
+
+Private Const KARIKATA_KAMOKU_CODE As String = "1111" ' 借方:勘定科目コード
+Private Const KARIKATA_HOJO_CODE As String = "2"    ' 借方:補助コード
+
+' --- メイン処理 ---
+Sub CreateJournalData()
+    ' --- 変数宣言 ---
+    Dim wsMonth As Worksheet
+    Dim wsTenki As Worksheet
+    Dim wsMaster As Worksheet
+    Dim monthSheetName As String
+    Dim prevMonthStr As String
+
+    Dim facilityDict As Object
+    Dim kamokuDict As Object
+    Dim expenseMap As Object
+
+    Dim lastRowMonth As Long
+    Dim lastRowMaster As Long
+    Dim r As Long
+    Dim destRow As Long
+    
+    Dim facilityName As String
+    Dim facilityCode As String
+    Dim expenseName As String
+    Dim amount As Variant
+    Dim col As Variant
+    Dim kamokuData As Variant
+    
+    Dim notFoundFacilities As String
+    Dim notFoundKamoku As String
+    Dim yoriRow As Long
+    Dim cellValueD As String
+    Dim cellValueYori As String
+
+    ' --- 初期設定 ---
+    Set facilityDict = CreateObject("Scripting.Dictionary")
+    Set kamokuDict = CreateObject("Scripting.Dictionary")
+    Set expenseMap = CreateObject("Scripting.Dictionary")
+    
+    monthSheetName = Format(Date, "YYYY.M") & "月"
+    prevMonthStr = Format(DateAdd("m", -1, Date), "M") & "月"
+
+    ' --- ワークシートの存在チェック ---
+    On Error Resume Next
+    Set wsMonth = ThisWorkbook.Sheets(monthSheetName)
+    On Error GoTo 0
+    If wsMonth Is Nothing Then
+        MsgBox "エラー: シート「" & monthSheetName & "」が見つかりませんでした。" & vbCrLf & "処理を中断します。", vbCritical
+        Exit Sub
+    End If
+
+    On Error Resume Next
+    Set wsTenki = ThisWorkbook.Sheets("転記用")
+    On Error GoTo 0
+    If wsTenki Is Nothing Then
+        MsgBox "エラー: シート「転記用」が見つかりませんでした。" & vbCrLf & "処理を中断します。", vbCritical
+        Exit Sub
+    End If
+
+    On Error Resume Next
+    Set wsMaster = ThisWorkbook.Sheets("マスタ")
+    On Error GoTo 0
+    If wsMaster Is Nothing Then
+        MsgBox "エラー: シート「マスタ」が見つかりませんでした。" & vbCrLf & "処理を中断します。", vbCritical
+        Exit Sub
+    End If
+    
+    ' --- 処理開始前の準備 ---
+    Application.ScreenUpdating = False
+    wsTenki.Rows("2:" & wsTenki.Rows.Count).ClearContents
+
+    ' --- マスタデータを辞書に読み込む ---
+    lastRowMaster = wsMaster.Cells(wsMaster.Rows.Count, "A").End(xlUp).Row
+    For r = 2 To lastRowMaster
+        If wsMaster.Cells(r, "B").Value <> "" Then
+            facilityDict(Trim(wsMaster.Cells(r, "B").Value)) = wsMaster.Cells(r, "A").Value
+        End If
+        If wsMaster.Cells(r, "D").Value <> "" Then
+            kamokuDict(Trim(wsMaster.Cells(r, "D").Value)) = Array(wsMaster.Cells(r, "E").Value, wsMaster.Cells(r, "F").Value)
+        End If
+    Next r
+
+    ' --- 転記元の列とマスタの貸方科目名の対応を設定 ---
+    expenseMap.Add 9, "所得税"
+    expenseMap.Add 10, "住民税"
+    expenseMap.Add 11, "労金"
+    expenseMap.Add 12, "育成"
+    expenseMap.Add 13, "県共済"
+    expenseMap.Add 14, "勤労者共済"
+
+    ' --- メイン処理 (月次シートをループ) ---
+    destRow = 2
+    lastRowMonth = wsMonth.Cells(wsMonth.Rows.Count, "D").End(xlUp).Row
+
+    For r = 3 To lastRowMonth
+        cellValueD = UCase(Replace(Trim(wsMonth.Cells(r, "D").Value), "　", " "))
+        
+        If cellValueD = UCase("給与 事業所負担") Then
+            yoriRow = r - 1
+            
+            If yoriRow > 0 Then
+                cellValueYori = UCase(Replace(Trim(wsMonth.Cells(yoriRow, "D").Value), "　", " "))
+
+                If cellValueYori = UCase("給与 預り分") Then
+                    facilityName = GetFacilityName(wsMonth, r)
+                    
+                    If facilityDict.Exists(facilityName) Then
+                        facilityCode = facilityDict(facilityName)
+
+                        ' --- 社会保険料の処理 (「事業所負担」行のH列から取得) ---
+                        amount = 0
+                        expenseName = "社会保険料"
+                        amount = wsMonth.Cells(r, "H").Value
+                        
+                        If IsNumeric(amount) And amount > 0 Then
+                            If kamokuDict.Exists(expenseName) Then
+                                kamokuData = kamokuDict(expenseName)
+                                Call WriteData(wsTenki, destRow, facilityCode, kamokuData, amount, expenseName, prevMonthStr)
+                                destRow = destRow + 1
+                            Else
+                                If InStr(notFoundKamoku, expenseName) = 0 Then notFoundKamoku = notFoundKamoku & "・" & expenseName & vbCrLf
+                            End If
+                        End If
+
+                        ' --- I列からM列までをループ処理 (「預り分」行から取得) ---
+                        For Each col In expenseMap.Keys
+                            amount = wsMonth.Cells(yoriRow, col).Value
+                            expenseName = expenseMap(col)
+                            
+                            If IsNumeric(amount) And amount > 0 Then
+                                If kamokuDict.Exists(expenseName) Then
+                                    kamokuData = kamokuDict(expenseName)
+                                    Call WriteData(wsTenki, destRow, facilityCode, kamokuData, amount, expenseName, prevMonthStr)
+                                    destRow = destRow + 1
+                                Else
+                                    If InStr(notFoundKamoku, expenseName) = 0 Then notFoundKamoku = notFoundKamoku & "・" & expenseName & vbCrLf
+                                End If
+                            End If
+                        Next col
+                    Else
+                        If facilityName <> "" And InStr(notFoundFacilities, facilityName) = 0 Then
+                            notFoundFacilities = notFoundFacilities & "・" & facilityName & vbCrLf
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    Next r
+
+    ' --- 終了処理 ---
+    wsTenki.Columns.AutoFit
+    Application.ScreenUpdating = True
+
+    ' --- 完了メッセージ ---
+    Dim msg As String
+    msg = "転記処理が完了しました。"
+    If notFoundFacilities <> "" Or notFoundKamoku <> "" Then
+        msg = "処理が完了しましたが、一部のデータが見つかりませんでした。" & vbCrLf & vbCrLf
+        If notFoundFacilities <> "" Then
+            msg = msg & "【マスタに見つからない事業所】" & vbCrLf & notFoundFacilities
+        End If
+        If notFoundKamoku <> "" Then
+            msg = msg & "【マスタに見つからない貸方科目】" & vbCrLf & notFoundKamoku
+        End If
+        MsgBox msg, vbExclamation, "完了（一部スキップ）"
+    Else
+        MsgBox msg, vbInformation, "完了"
+    End If
+    
+    Set wsMonth = Nothing
+    Set wsTenki = Nothing
+    Set wsMaster = Nothing
+    Set facilityDict = Nothing
+    Set kamokuDict = Nothing
+    Set expenseMap = Nothing
+End Sub
+
+Private Function GetFacilityName(ws As Worksheet, currentRow As Long) As String
+    Dim r As Long
+    For r = currentRow To 1 Step -1
+        If ws.Cells(r, "A").Value <> "" Then
+            GetFacilityName = Trim(ws.Cells(r, "A").Value)
+            Exit Function
+        End If
+    Next r
+End Function
+
+Private Sub WriteData(ws As Worksheet, r As Long, code As String, kamoku As Variant, val As Variant, ByVal tekiyoName As String, ByVal monthStr As String)
+    With ws.Cells(r, "A")
+        .Value = code
+        .Offset(0, 2).Value = KARIKATA_KAMOKU_CODE
+        .Offset(0, 3).Value = KARIKATA_HOJO_CODE
+        .Offset(0, 4).Value = val
+        .Offset(0, 5).Value = kamoku(0)
+        .Offset(0, 6).Value = kamoku(1)
+        .Offset(0, 7).Value = val
+        .Offset(0, 8).Value = monthStr & "分常勤職員給与の"
+        .Offset(0, 9).Value = tekiyoName & "として"
+    End With
+End Sub
