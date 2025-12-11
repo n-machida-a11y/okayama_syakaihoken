@@ -1,0 +1,28 @@
+' VBA Project
+' --------------------------------------------------
+' FileName: RunAll.vba
+' --------------------------------------------------
+Option Explicit
+
+' --- 2つのマクロを連続で実行する ---
+Sub RunAllMacros()
+    ' 画面の更新を停止して処理を高速化
+    Application.ScreenUpdating = False
+
+    ' --- ステップ1: 社会保険料の転記 ---
+    ' 「健康保険・厚生年金」シートから月次シートへ転記します。
+    Call TransferSocialInsuranceData
+    
+    ' --- ステップ2: 仕訳データの作成 ---
+    ' 月次シートから「転記用」シートへ仕訳データを作成します。
+    Call CreateJournalData
+    
+    ' 画面の更新を再開
+    Application.ScreenUpdating = True
+    
+    ' --- 完了メッセージ ---
+    ' CreateJournalDataの最後に完了メッセージがあるため、ここでは不要
+    ' もし全体の完了メッセージが必要な場合は、以下のコメントを解除してください。
+    ' MsgBox "すべての転記処理が完了しました。", vbInformation, "全処理完了"
+End Sub
+
